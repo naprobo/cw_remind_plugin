@@ -1,0 +1,14 @@
+FROM node:20-bookworm AS node
+
+FROM golang:1.24-bookworm
+
+COPY --from=node /usr/local/ /usr/local/
+
+WORKDIR /workspace
+
+ENV CGO_ENABLED=0 \
+    GOCACHE=/cache/go-build \
+    GOMODCACHE=/cache/go-mod \
+    npm_config_cache=/cache/npm
+
+CMD ["sh", "/workspace/build/docker-build.sh"]

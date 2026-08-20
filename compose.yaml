@@ -1,0 +1,21 @@
+services:
+  builder:
+    build:
+      context: .
+      dockerfile: Dockerfile.build
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - go-build-cache:/cache/go-build
+      - go-mod-cache:/cache/go-mod
+      - npm-cache:/cache/npm
+      - webapp-node-modules:/workspace/webapp/node_modules
+    environment:
+      CGO_ENABLED: "0"
+    command: ["sh", "/workspace/build/docker-build.sh"]
+
+volumes:
+  go-build-cache:
+  go-mod-cache:
+  npm-cache:
+  webapp-node-modules:

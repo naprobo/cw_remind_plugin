@@ -1,0 +1,4 @@
+/server/dist/
+/webapp/dist/
+/webapp/node_modules/
+*.exe
