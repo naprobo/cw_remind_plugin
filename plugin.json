@@ -2,7 +2,7 @@
   "id": "com.cw.remind",
   "name": "CW Remind",
   "description": "Create multi-stage deadline reminders from /remind.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "min_server_version": "9.5.0",
   "server": {
     "executables": {

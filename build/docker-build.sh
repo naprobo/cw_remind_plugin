@@ -25,7 +25,14 @@ npm run build
 echo "Packaging plugin..."
 cd /workspace
 mkdir -p dist
-rm -f dist/com.cw.remind-0.1.0.tar.gz
-tar -czf dist/com.cw.remind-0.1.0.tar.gz plugin.json server/dist webapp/dist
+rm -f dist/com.cw.remind-0.1.1.tar.gz
+rm -rf dist/com.cw.remind
+mkdir -p dist/com.cw.remind/server/dist dist/com.cw.remind/webapp/dist dist/com.cw.remind/assets
+cp plugin.json dist/com.cw.remind/plugin.json
+cp -R server/dist/. dist/com.cw.remind/server/dist/
+cp -R webapp/dist/. dist/com.cw.remind/webapp/dist/
+cp -R assets/. dist/com.cw.remind/assets/
+tar -czf dist/com.cw.remind-0.1.1.tar.gz -C dist com.cw.remind
+rm -rf dist/com.cw.remind
 
-echo "Built dist/com.cw.remind-0.1.0.tar.gz"
+echo "Built dist/com.cw.remind-0.1.1.tar.gz"

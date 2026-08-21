@@ -1,5 +1,5 @@
 PLUGIN_ID := com.cw.remind
-VERSION := 0.1.0
+VERSION := 0.1.1
 
 .PHONY: build server webapp dist clean test docker-build
 build: server webapp
@@ -17,7 +17,14 @@ webapp:
 
 dist: build
 	mkdir -p dist
-	tar -czf dist/$(PLUGIN_ID)-$(VERSION).tar.gz plugin.json server/dist webapp/dist
+	rm -rf dist/$(PLUGIN_ID)
+	mkdir -p dist/$(PLUGIN_ID)/server/dist dist/$(PLUGIN_ID)/webapp/dist dist/$(PLUGIN_ID)/assets
+	cp plugin.json dist/$(PLUGIN_ID)/plugin.json
+	cp -R server/dist/. dist/$(PLUGIN_ID)/server/dist/
+	cp -R webapp/dist/. dist/$(PLUGIN_ID)/webapp/dist/
+	cp -R assets/. dist/$(PLUGIN_ID)/assets/
+	tar -czf dist/$(PLUGIN_ID)-$(VERSION).tar.gz -C dist $(PLUGIN_ID)
+	rm -rf dist/$(PLUGIN_ID)
 
 test:
 	go test ./server/...
