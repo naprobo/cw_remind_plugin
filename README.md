@@ -2,15 +2,23 @@
 
 CW Remind adds multi-stage deadline reminders to Mattermost. Open the reminder dialog with `/remind` or the megaphone button in the channel header, then schedule one or more notifications before a due date.
 
-<img width="597" height="761" alt="image" src="https://github.com/user-attachments/assets/3b293878-f8e7-427b-8da4-fb09e4520247" />
+---
+
+Create a new reminder.
+
+<img width="588" height="754" alt="image" src="https://github.com/user-attachments/assets/fff7b40c-5767-4607-8b67-f95338454978" />
 
 ---
 
-<img width="590" height="350" alt="image" src="https://github.com/user-attachments/assets/ccd79fc5-ce01-4da4-9266-7ae1a39b8077" />
+Reminder of what it looks like in the chat room.
+
+<img width="593" height="414" alt="image" src="https://github.com/user-attachments/assets/316c48e4-0f1e-4149-aea3-8b0e98a3802c" />
 
 ---
 
-<img width="580" height="443" alt="image" src="https://github.com/user-attachments/assets/85ad1373-64ce-4a21-891d-156755911ed6" />
+When you need to modify or delete a reminder.
+
+<img width="580" height="449" alt="image" src="https://github.com/user-attachments/assets/e345bb41-52fd-4534-8b02-fb14360e477f" />
 
 
 ## Features
