@@ -2,6 +2,17 @@
 
 CW Remind adds multi-stage deadline reminders to Mattermost. Open the reminder dialog with `/remind` or the megaphone button in the channel header, then schedule one or more notifications before a due date.
 
+<img width="597" height="761" alt="image" src="https://github.com/user-attachments/assets/3b293878-f8e7-427b-8da4-fb09e4520247" />
+
+---
+
+<img width="590" height="350" alt="image" src="https://github.com/user-attachments/assets/ccd79fc5-ce01-4da4-9266-7ae1a39b8077" />
+
+---
+
+<img width="580" height="443" alt="image" src="https://github.com/user-attachments/assets/85ad1373-64ce-4a21-891d-156755911ed6" />
+
+
 ## Features
 
 - Publishes a reminder announcement immediately through the `DueWatch` bot.
