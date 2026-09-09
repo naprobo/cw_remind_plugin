@@ -19,6 +19,8 @@ let readLocale: () => SupportedLocale = () => 'en';
 let readCurrentUserID: () => string = () => '';
 let subscribeToLocale: (listener: () => void) => () => void = () => () => {};
 
+const ChannelHeaderIcon = () => <img className='cw-channel-header-icon' src={`/plugins/${PLUGIN_ID}/public/duewatch-icon.png`} alt=''/>;
+
 function getCookie(name: string): string {
   const prefix = `${name}=`;
   const cookie = document.cookie.split(';').map((value) => value.trim()).find((value) => value.startsWith(prefix));
@@ -178,6 +180,15 @@ class Plugin {
     readCurrentUserID = () => store.getState().entities?.users?.currentUserId || '';
     subscribeToLocale = (listener) => store.subscribe(listener);
     registry.registerRootComponent(Modal);
+    registry.registerChannelHeaderButtonAction(
+      <ChannelHeaderIcon/>,
+      (channel: {id?: string} | string) => {
+        const channelId = typeof channel === 'string' ? channel : channel?.id;
+        if (channelId) { openDialog(channelId); }
+      },
+      getMessages(readLocale()).create,
+      'DueWatch',
+    );
     registry.registerWebSocketEventHandler(`custom_${PLUGIN_ID}_open`, (message: any) => openDialog(message.data.channel_id));
   }
 }

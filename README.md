@@ -1,45 +1,58 @@
-# CW Remind Plugin
+# CW Remind for Mattermost
 
-Mattermost 的多阶段期限提醒插件。输入 `/remind` 打开设置窗口，可为同一期限追加多个提醒时点，也可在“历史记录”页查看当前频道的全部提醒事件，新记录在上。
+CW Remind adds multi-stage deadline reminders to Mattermost. Open the reminder dialog with `/remind` or the megaphone button in the channel header, then schedule one or more notifications before a due date.
 
-插件启用时会创建或复用 `DueWatch` Bot（用户名 `duewatch`）。建立提醒后，DueWatch 会立即向原频道发布标题、代码块正文、期限和后续提醒时间；目标用户可点击“了解”或“対応済み”，后续提醒只点名尚未处理完成的成员。
+## Features
 
-GUI 跟随当前用户的 Mattermost 显示语言，支持英语（默认）、日语和简体中文。
+- Publishes a reminder announcement immediately through the `DueWatch` bot.
+- Supports multiple notification times for a single due date.
+- Notifies everyone in the channel or selected channel members.
+- Lets recipients acknowledge a reminder or mark it as completed directly from the post.
+- Excludes completed recipients from later notifications.
+- Provides a channel history view with newest reminders first.
+- Lets the creator edit or soft-delete a reminder while preserving its history.
+- Updates existing posts after edits and strikes through posts after deletion.
+- Uses English by default and follows the Mattermost user locale for Japanese and Simplified Chinese.
+- Works on desktop and mobile layouts.
 
-选择“指定用户”时，可搜索并多选当前频道成员；插件不会接受不属于该频道的用户。
+## Requirements
 
-提醒创建者可从历史记录编辑或软删除事件。编辑会同步所有已发布帖子；删除会停止调度、保留履历，并给历史帖子加删除线。
+- Mattermost 9.5 or later. Mattermost 10.12 is the primary tested version.
+- System administrator access to install and enable plugins.
+- Plugin uploads enabled on the Mattermost server when installing through the System Console.
 
-详细需求和扩展设计见 [SPEC.md](SPEC.md)。
+## Installation
 
-## 构建
+1. Download `com.cw.remind-0.1.1.tar.gz` from the project releases.
+2. In Mattermost, open **System Console > Plugins > Plugin Management**.
+3. Upload the archive and enable **CW Remind**.
+4. Open a channel and confirm that the megaphone button appears in the channel header.
 
-需要 Go 1.24+、Node.js/npm、GNU Make（Windows 可使用 WSL）。
-
-```bash
-make dist
-```
-
-产物为 `dist/com.cw.remind-0.1.1.tar.gz`。在 Mattermost System Console > Plugins > Plugin Management 上传并启用。服务器需允许插件上传。
-
-### Docker Compose 构建（推荐）
-
-本机只需 Docker，无需安装 Go 或 Node.js：
-
-```bash
-docker compose run --rm builder
-```
-
-首次会构建包含 Go 1.24 和 Node.js 20 的 builder image。Go module、Go build、npm 及 `node_modules` 使用 Docker named volumes 缓存，后续构建会更快。命令会依次执行格式化、Go 测试、多平台编译、TypeScript 检查、WebApp 构建及打包。
-
-## 开发验证
+Administrators using local mode can install the archive with `mmctl`:
 
 ```bash
-go test ./server/...
-cd webapp
-npm install
-npm run check-types
-npm run build
+mmctl plugin add com.cw.remind-0.1.1.tar.gz --local
+mmctl plugin enable com.cw.remind --local
 ```
 
-> MVP 调度器面向单 Mattermost 节点。部署到 HA 集群前，请按 SPEC 中的扩展设计引入集群任务锁。
+When replacing a build that uses the same version number, disable and remove the installed plugin first, install the new archive, and refresh the Mattermost browser tab.
+
+## Usage
+
+1. Enter `/remind` or click the megaphone button in the current channel.
+2. Enter a title, reminder text, due date, and one or more notification times.
+3. Choose **Everyone** or **Specific users**. Specific users must be current members of the channel.
+4. Create the reminder. DueWatch immediately posts the title, content, due date, and notification schedule.
+5. Recipients can select **Acknowledged** or **Completed** from the reminder post.
+6. Open the **History** tab to review, edit, or delete reminders in the current channel.
+
+Only the reminder creator can edit or delete it. Deleted reminders remain visible in history but no longer send notifications.
+
+## Uninstallation
+
+Disable and remove `com.cw.remind` from **System Console > Plugins > Plugin Management**, or run:
+
+```bash
+mmctl plugin disable com.cw.remind --local
+mmctl plugin delete com.cw.remind --local
+```
