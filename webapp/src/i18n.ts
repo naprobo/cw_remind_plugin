@@ -70,6 +70,8 @@ const english = {
   legacyTitle: 'Deadline reminder',
   historyLoadFailed: 'Could not load reminder history.',
   usersLoadFailed: 'Could not load channel members.',
+  postLoadFailed: 'Could not load this reminder.',
+  statusSaveFailed: 'Could not update your response.',
 } as const;
 
 type Messages = {[K in keyof typeof english]: string};
@@ -146,6 +148,8 @@ const messages: Record<SupportedLocale, Messages> = {
     legacyTitle: '期限リマインダー',
     historyLoadFailed: 'リマインダー履歴を読み込めませんでした。',
     usersLoadFailed: 'チャンネルメンバーを読み込めませんでした。',
+    postLoadFailed: 'このリマインダーを読み込めませんでした。',
+    statusSaveFailed: '対応状況を更新できませんでした。',
   },
   'zh-CN': {
     title: '创建期限提醒',
@@ -217,6 +221,8 @@ const messages: Record<SupportedLocale, Messages> = {
     legacyTitle: '期限提醒',
     historyLoadFailed: '无法加载提醒历史记录。',
     usersLoadFailed: '无法加载频道成员。',
+    postLoadFailed: '无法加载该提醒。',
+    statusSaveFailed: '无法更新处理状态。',
   },
 };
 

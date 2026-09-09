@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -132,4 +134,37 @@ func TestAcknowledgementRemainsPending(t *testing.T) {
 func TestFencedContentUsesLongerFenceForEmbeddedBackticks(t *testing.T) {
 	require.Equal(t, "```\nplain\n```", fencedContent("plain"))
 	require.Equal(t, "````\ninside ``` fence\n````", fencedContent("inside ``` fence"))
+}
+
+func TestReminderFallbackMessageUsesEnglishLabels(t *testing.T) {
+	reminder := &Reminder{
+		Title:           "Quarterly report",
+		Content:         "Submit the report",
+		DueDate:         "2026-09-30",
+		Timezone:        "Asia/Tokyo",
+		CreatorUsername: "alice",
+		TargetUsers:     []ReminderUser{{ID: "user-id", Username: "bob"}},
+	}
+
+	message := reminderFallbackMessage(reminder, false, "@bob")
+
+	require.Contains(t, message, "Due date:")
+	require.Contains(t, message, "Created by:")
+	require.Contains(t, message, "Not handled (1):")
+	require.False(t, strings.Contains(message, "期限:"))
+}
+
+func TestSetReminderPostPropsAddsRendererData(t *testing.T) {
+	post := &model.Post{}
+	reminder := &Reminder{ID: "reminder-id", ActionToken: "private-token"}
+
+	setReminderPostProps(post, reminder, true)
+
+	require.Equal(t, "reminder-id", post.Props["reminder_id"])
+	require.Equal(t, "true", post.Props["reminder_announcement"])
+	require.NotZero(t, post.Props["reminder_revision"])
+}
+
+func TestReminderPostTypeFitsMattermostDatabaseColumn(t *testing.T) {
+	require.LessOrEqual(t, len(reminderPostType), 26)
 }

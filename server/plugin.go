@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	pluginID = "com.cw.remind"
-	indexKey = "reminder_index"
+	pluginID         = "com.cw.remind"
+	indexKey         = "reminder_index"
+	reminderPostType = "custom_cw_reminder"
 )
 
 type Plugin struct {
@@ -47,6 +48,7 @@ func (p *Plugin) OnActivate() error {
 	}
 	p.stop = make(chan struct{})
 	go p.runScheduler()
+	go p.migrateReminderPosts()
 	return nil
 }
 
@@ -95,20 +97,60 @@ func (p *Plugin) ServeHTTP(_ *plugin.Context, w http.ResponseWriter, r *http.Req
 		http.Error(w, `{"error":"authentication required"}`, http.StatusUnauthorized)
 		return
 	}
+	path := strings.Trim(r.URL.Path, "/")
+	parts := strings.Split(path, "/")
 	switch {
-	case r.URL.Path == "/api/v1/reminders" && r.Method == http.MethodPost:
+	case path == "api/v1/reminders" && r.Method == http.MethodPost:
 		p.handleCreateReminder(w, r, userID)
-	case r.URL.Path == "/api/v1/reminders" && r.Method == http.MethodGet:
+	case path == "api/v1/reminders" && r.Method == http.MethodGet:
 		p.handleListReminders(w, r, userID)
-	case r.URL.Path == "/api/v1/channel-users" && r.Method == http.MethodGet:
+	case path == "api/v1/channel-users" && r.Method == http.MethodGet:
 		p.handleChannelUsers(w, r, userID)
-	case strings.HasPrefix(r.URL.Path, "/api/v1/reminders/") && r.Method == http.MethodPut:
-		p.handleUpdateReminder(w, r, userID, strings.TrimPrefix(r.URL.Path, "/api/v1/reminders/"))
-	case strings.HasPrefix(r.URL.Path, "/api/v1/reminders/") && r.Method == http.MethodDelete:
-		p.handleDeleteReminder(w, r, userID, strings.TrimPrefix(r.URL.Path, "/api/v1/reminders/"))
+	case len(parts) == 4 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "reminders" && r.Method == http.MethodGet:
+		p.handleGetReminder(w, userID, parts[3])
+	case len(parts) == 4 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "reminders" && r.Method == http.MethodPut:
+		p.handleUpdateReminder(w, r, userID, parts[3])
+	case len(parts) == 4 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "reminders" && r.Method == http.MethodDelete:
+		p.handleDeleteReminder(w, r, userID, parts[3])
+	case len(parts) == 5 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "reminders" && parts[4] == "acknowledge" && r.Method == http.MethodPost:
+		p.handleAuthenticatedStatus(w, userID, parts[3], "acknowledged")
+	case len(parts) == 5 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "reminders" && parts[4] == "complete" && r.Method == http.MethodPost:
+		p.handleAuthenticatedStatus(w, userID, parts[3], "completed")
 	default:
 		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 	}
+}
+
+func (p *Plugin) handleGetReminder(w http.ResponseWriter, userID, reminderID string) {
+	reminder, err := p.getReminder(reminderID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "reminder not found")
+		return
+	}
+	if err := p.requireChannelMember(reminder.ChannelID, userID); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+	_ = json.NewEncoder(w).Encode(publicReminder(reminder))
+}
+
+func (p *Plugin) handleAuthenticatedStatus(w http.ResponseWriter, userID, reminderID, status string) {
+	current, err := p.getReminder(reminderID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "reminder not found")
+		return
+	}
+	if err := p.requireChannelMember(current.ChannelID, userID); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+	reminder, _, err := p.setUserStatus(reminderID, current.ActionToken, userID, current.ChannelID, status)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	p.updateAllReminderPosts(reminder)
+	_ = json.NewEncoder(w).Encode(publicReminder(reminder))
 }
 
 func (p *Plugin) handleCreateReminder(w http.ResponseWriter, r *http.Request, userID string) {
@@ -747,15 +789,8 @@ func (p *Plugin) createReminderPost(rem *Reminder, announcement bool) (*model.Po
 	} else if len(rem.TargetUsers) > 0 {
 		mention = userMentions(pendingUsers(rem))
 	}
-	message := fmt.Sprintf("🔔 %s **%s**\n\n%s\n\n期限: **%s** (%s) · 作成者: @%s", mention, reminderTitle(rem), fencedContent(rem.Content), rem.DueDate, rem.Timezone, rem.CreatorUsername)
-	if announcement {
-		message += "\n\n再通知予定:\n" + reminderSchedule(rem)
-	}
-	if rem.DeletedAt != 0 {
-		message = strikeMessage(message)
-	}
-	post := &model.Post{UserId: p.botUserID, ChannelId: rem.ChannelID, Message: message}
-	p.setReminderAttachment(post, rem)
+	post := &model.Post{UserId: p.botUserID, ChannelId: rem.ChannelID, Type: reminderPostType, Message: reminderFallbackMessage(rem, announcement, mention)}
+	setReminderPostProps(post, rem, announcement)
 	created, appErr := p.API.CreatePost(post)
 	if appErr != nil {
 		return nil, fmt.Errorf("create post: %s", appErr.Error())
@@ -765,9 +800,28 @@ func (p *Plugin) createReminderPost(rem *Reminder, announcement bool) (*model.Po
 
 func reminderTitle(reminder *Reminder) string {
 	if strings.TrimSpace(reminder.Title) == "" {
-		return "期限リマインダー"
+		return "Deadline reminder"
 	}
 	return reminder.Title
+}
+
+func reminderFallbackMessage(reminder *Reminder, announcement bool, mention string) string {
+	unhandled := unacknowledgedUsers(reminder)
+	message := fmt.Sprintf("🔔 %s **%s**\n\n%s\n\nDue date: **%s** (%s) · Created by: @%s", mention, reminderTitle(reminder), fencedContent(reminder.Content), reminder.DueDate, reminder.Timezone, reminder.CreatorUsername)
+	if announcement {
+		message += "\n\nFollow-up reminder times:\n" + reminderSchedule(reminder)
+	}
+	message += fmt.Sprintf("\n\n**Not handled (%d):** %s\n**Acknowledged (%d):** %s\n**Handled (%d):** %s", len(unhandled), fallbackUserMentions(unhandled), len(reminder.Acknowledgements), fallbackAcknowledgementMentions(reminder.Acknowledgements), len(reminder.Completions), fallbackCompletionMentions(reminder.Completions))
+	if reminder.DeletedAt != 0 {
+		message = strikeMessage(message)
+	}
+	return message
+}
+
+func setReminderPostProps(post *model.Post, reminder *Reminder, announcement bool) {
+	post.AddProp("reminder_id", reminder.ID)
+	post.AddProp("reminder_announcement", fmt.Sprintf("%t", announcement))
+	post.AddProp("reminder_revision", time.Now().UnixMilli())
 }
 
 func fencedContent(content string) string {
@@ -881,7 +935,6 @@ func (p *Plugin) updateReminderPost(reminderPost ReminderPost, reminder *Reminde
 	if appErr != nil || post.UserId != p.botUserID || post.ChannelId != reminder.ChannelID {
 		return
 	}
-	fresh := &model.Post{Message: ""}
 	mention := "@" + reminder.Audience
 	if reminderPost.Announcement {
 		if reminder.Audience == "users" {
@@ -890,16 +943,63 @@ func (p *Plugin) updateReminderPost(reminderPost ReminderPost, reminder *Reminde
 	} else if len(reminder.TargetUsers) > 0 {
 		mention = userMentions(pendingUsers(reminder))
 	}
-	fresh.Message = fmt.Sprintf("🔔 %s **%s**\n\n%s\n\n期限: **%s** (%s) · 作成者: @%s", mention, reminderTitle(reminder), fencedContent(reminder.Content), reminder.DueDate, reminder.Timezone, reminder.CreatorUsername)
-	if reminderPost.Announcement {
-		fresh.Message += "\n\n再通知予定:\n" + reminderSchedule(reminder)
-	}
-	if reminder.DeletedAt != 0 {
-		fresh.Message = strikeMessage(fresh.Message)
-	}
-	post.Message = fresh.Message
-	p.setReminderAttachment(post, reminder)
+	post.Type = reminderPostType
+	post.Message = reminderFallbackMessage(reminder, reminderPost.Announcement, mention)
+	post.DelProp(model.PostPropsAttachments)
+	setReminderPostProps(post, reminder, reminderPost.Announcement)
 	if _, appErr := p.API.UpdatePost(post); appErr != nil {
 		p.API.LogError("update reminder post", "post_id", reminderPost.ID, "error", appErr.Error())
 	}
+}
+
+func (p *Plugin) migrateReminderPosts() {
+	p.storeLock.Lock()
+	ids, err := p.loadIndex()
+	p.storeLock.Unlock()
+	if err != nil {
+		p.API.LogError("load reminder index for post migration", "error", err.Error())
+		return
+	}
+	for _, id := range ids {
+		reminder, err := p.getReminder(id)
+		if err != nil {
+			continue
+		}
+		for _, record := range reminderPostRecords(reminder) {
+			post, appErr := p.API.GetPost(record.ID)
+			if appErr == nil && post != nil && post.Type == reminderPostType {
+				continue
+			}
+			p.updateReminderPost(record, reminder)
+		}
+	}
+}
+
+func fallbackUserMentions(users []ReminderUser) string {
+	if len(users) == 0 {
+		return "None"
+	}
+	return userMentions(users)
+}
+
+func fallbackCompletionMentions(completions []Completion) string {
+	if len(completions) == 0 {
+		return "None"
+	}
+	parts := make([]string, len(completions))
+	for i, completion := range completions {
+		parts[i] = "@" + completion.Username
+	}
+	return strings.Join(parts, " ")
+}
+
+func fallbackAcknowledgementMentions(acknowledgements []Acknowledgement) string {
+	if len(acknowledgements) == 0 {
+		return "None"
+	}
+	parts := make([]string, len(acknowledgements))
+	for i, acknowledgement := range acknowledgements {
+		parts[i] = "@" + acknowledgement.Username
+	}
+	return strings.Join(parts, " ")
 }

@@ -1,9 +1,10 @@
-import React, {useEffect, useState} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import {createPortal} from 'react-dom';
 import {getMessages, localizeServerError, resolveLocale, SupportedLocale} from './i18n';
 import './style.css';
 
 const PLUGIN_ID = 'com.cw.remind';
+const REMINDER_POST_TYPE = 'custom_cw_reminder';
 type Rule = {days_before: number; time: string};
 type StoredRule = Rule & {fire_at: number; fired_at?: number};
 type ReminderUser = {id: string; username: string};
@@ -18,6 +19,8 @@ let openDialog: (channelId: string) => void = () => {};
 let readLocale: () => SupportedLocale = () => 'en';
 let readCurrentUserID: () => string = () => '';
 let subscribeToLocale: (listener: () => void) => () => void = () => () => {};
+const reminderCache = new Map<string, Reminder>();
+const reminderRequests = new Map<string, Promise<Reminder>>();
 
 const ChannelHeaderIcon = () => <img className='cw-channel-header-icon' src={`/plugins/${PLUGIN_ID}/public/duewatch-icon.png`} alt=''/>;
 
@@ -37,10 +40,118 @@ async function readResponse(response: Response): Promise<any> {
   }
 }
 
+function requestHeaders(json = false): Record<string, string> {
+  const headers: Record<string, string> = {'X-Requested-With': 'XMLHttpRequest'};
+  if (json) { headers['Content-Type'] = 'application/json'; }
+  const csrfToken = getCookie('MMCSRF');
+  if (csrfToken) { headers['X-CSRF-Token'] = csrfToken; }
+  return headers;
+}
+
 function useMattermostLocale(): SupportedLocale {
   const [locale, setLocale] = useState(readLocale);
   useEffect(() => subscribeToLocale(() => setLocale(readLocale())), []);
   return locale;
+}
+
+function formatReminderTime(epoch: number, locale: SupportedLocale, timezone: string): string {
+  try {
+    return new Date(epoch).toLocaleString(locale, {timeZone: timezone});
+  } catch {
+    return new Date(epoch).toLocaleString(locale);
+  }
+}
+
+async function fetchReminder(reminderId: string, fallbackError: string, force = false): Promise<Reminder> {
+  if (!force && reminderCache.has(reminderId)) { return reminderCache.get(reminderId)!; }
+  if (reminderRequests.has(reminderId)) { return reminderRequests.get(reminderId)!; }
+  const request = (async () => {
+    const response = await fetch(`/plugins/${PLUGIN_ID}/api/v1/reminders/${reminderId}`, {credentials: 'include', headers: requestHeaders()});
+    const body = await readResponse(response);
+    if (!response.ok) { throw new Error(body.error || fallbackError); }
+    reminderCache.set(reminderId, body as Reminder);
+    return body as Reminder;
+  })();
+  reminderRequests.set(reminderId, request);
+  try {
+    return await request;
+  } finally {
+    reminderRequests.delete(reminderId);
+  }
+}
+
+function ReminderCard({reminderId, announcement, revision}: {reminderId: string; announcement: boolean; revision?: number}) {
+  const locale = useMattermostLocale();
+  const text = getMessages(locale);
+  const [reminder, setReminder] = useState<Reminder | null>(() => reminderCache.get(reminderId) || null);
+  const [loading, setLoading] = useState(!reminderCache.has(reminderId));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const lastRevision = useRef(revision);
+  const load = async (force = false) => {
+    if (!force && reminderCache.has(reminderId)) {
+      setReminder(reminderCache.get(reminderId)!);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      setReminder(await fetchReminder(reminderId, text.postLoadFailed, force));
+      setError('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : text.postLoadFailed);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    const force = lastRevision.current !== revision;
+    lastRevision.current = revision;
+    void load(force);
+  }, [reminderId, revision]);
+  const updateStatus = async (status: 'acknowledge' | 'complete') => {
+    setSaving(true); setError('');
+    try {
+      const response = await fetch(`/plugins/${PLUGIN_ID}/api/v1/reminders/${reminderId}/${status}`, {method: 'POST', credentials: 'include', headers: requestHeaders()});
+      const body = await readResponse(response);
+      if (!response.ok) { throw new Error(body.error || text.statusSaveFailed); }
+      reminderCache.set(reminderId, body as Reminder);
+      setReminder(body as Reminder);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : text.statusSaveFailed);
+    } finally {
+      setSaving(false);
+    }
+  };
+  if (loading) { return <div className='cw-post-card cw-post-loading'>{text.loading}</div>; }
+  if (!reminder) { return <div className='cw-post-card cw-error'>{error || text.postLoadFailed}</div>; }
+  const completions = reminder.completions || [];
+  const acknowledgements = reminder.acknowledgements || [];
+  const completedIds = new Set(completions.map((item) => item.user_id));
+  const acknowledgedIds = new Set(acknowledgements.map((item) => item.user_id));
+  const unhandled = (reminder.target_users || []).filter((user) => !completedIds.has(user.id) && !acknowledgedIds.has(user.id));
+  const currentUserId = readCurrentUserID();
+  const isTarget = (reminder.target_users || []).some((user) => user.id === currentUserId);
+  const isCompleted = completedIds.has(currentUserId);
+  const isAcknowledged = acknowledgedIds.has(currentUserId);
+  const canAct = isTarget && !isCompleted && !reminder.deleted_at;
+  const userList = (items: Array<{username: string}>) => items.length ? items.map((item) => `@${item.username}`).join(' ') : text.none;
+  return <div className={`cw-post-card ${reminder.deleted_at ? 'deleted' : ''}`} onClick={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()}>
+    <div className='cw-post-heading'><h3>{reminder.title || text.legacyTitle}</h3>{reminder.deleted_at && <b>{text.deleted}</b>}</div>
+    <pre>{reminder.content}</pre>
+    <div className='cw-post-meta'><span>{text.dueDate}: <strong>{reminder.due_date}</strong> ({reminder.timezone})</span><span>{text.creator}: @{reminder.creator_username}</span></div>
+    {announcement && <div className='cw-post-schedule'><strong>{text.reminderTimes}</strong>{reminder.rules.map((rule, index) => <span key={`${rule.fire_at}-${index}`}>{formatReminderTime(rule.fire_at, locale, reminder.timezone)}</span>)}</div>}
+    <div className='cw-post-status'><span><strong>{text.notHandled} ({unhandled.length}):</strong> {userList(unhandled)}</span><span><strong>{text.acknowledged} ({acknowledgements.length}):</strong> {userList(acknowledgements)}</span><span><strong>{text.handled} ({completions.length}):</strong> {userList(completions)}</span></div>
+    {canAct && <div className='cw-post-actions'>{!isAcknowledged && <button type='button' disabled={saving} className='acknowledge' onClick={() => void updateStatus('acknowledge')}>{text.acknowledged}</button>}<button type='button' disabled={saving} className='complete' onClick={() => void updateStatus('complete')}>{text.handled}</button></div>}
+    {error && <div className='cw-error'>{error}</div>}
+  </div>;
+}
+
+function ReminderPost(props: any) {
+  const reminderId = props.post?.props?.reminder_id;
+  if (!reminderId) { return null; }
+  const announcement = props.post?.props?.reminder_announcement === true || props.post?.props?.reminder_announcement === 'true';
+  return <ReminderCard reminderId={reminderId} announcement={announcement} revision={props.post?.props?.reminder_revision}/>;
 }
 
 function Modal() {
@@ -146,7 +257,7 @@ function Modal() {
       {view === 'create' && <>
       <label>{text.reminderTitle}<input required maxLength={200} value={title} onChange={(e) => setTitle(e.target.value)} placeholder={text.titlePlaceholder}/></label>
       <label>{text.content}<textarea required maxLength={4000} value={content} onChange={(e) => setContent(e.target.value)} placeholder={text.contentPlaceholder}/></label>
-      <label>{text.dueDate}<input required type='date' value={dueDate} onChange={(e) => setDueDate(e.target.value)}/></label>
+      <label>{text.dueDate}<input required type='date' lang={locale} value={dueDate} onChange={(e) => setDueDate(e.target.value)}/></label>
       <fieldset><legend>{text.audience}</legend>
         {[['all', text.audienceAll], ['users', text.audienceUsers]].map(([v, label]) => <label className='cw-radio' key={v}><input type='radio' value={v} checked={audience === v} onChange={() => setAudience(v)}/>{label}</label>)}
       </fieldset>
@@ -171,15 +282,28 @@ function Modal() {
 
 class Plugin {
   initialize(registry: any, store: MattermostStore) {
-    readLocale = () => {
+    const resolveStoreLocale = () => {
       const state = store.getState();
       const users = state.entities?.users;
       const userLocale = users?.currentUserId ? users.profiles?.[users.currentUserId]?.locale : undefined;
       return resolveLocale(userLocale || state.entities?.general?.config?.DefaultClientLocale);
     };
+    let currentLocale = resolveStoreLocale();
+    const localeListeners = new Set<() => void>();
+    readLocale = () => currentLocale;
     readCurrentUserID = () => store.getState().entities?.users?.currentUserId || '';
-    subscribeToLocale = (listener) => store.subscribe(listener);
+    subscribeToLocale = (listener) => {
+      localeListeners.add(listener);
+      return () => localeListeners.delete(listener);
+    };
+    store.subscribe(() => {
+      const nextLocale = resolveStoreLocale();
+      if (nextLocale === currentLocale) { return; }
+      currentLocale = nextLocale;
+      localeListeners.forEach((listener) => listener());
+    });
     registry.registerRootComponent(Modal);
+    registry.registerPostTypeComponent(REMINDER_POST_TYPE, ReminderPost);
     registry.registerChannelHeaderButtonAction(
       <ChannelHeaderIcon/>,
       (channel: {id?: string} | string) => {
